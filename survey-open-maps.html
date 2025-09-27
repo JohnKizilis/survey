@@ -3,87 +3,145 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Quick Survey → Open Maps</title>
+  <title>Survey / PseudoSurvey → Open Maps</title>
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; margin: 0; padding: 24px; }
-    form { max-width: 720px; margin: 0 auto; }
-    fieldset { border: 1px solid #999; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    main { max-width: 820px; margin: 0 auto; }
+    h1 { margin-bottom: .25rem; }
+    nav { margin: 12px 0 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .muted { opacity: .8; font-size: .95em; }
+    .hidden { display: none !important; }
+    .error { color: #b00020; }
+
+    fieldset { border: 1px solid #999; border-radius: 12px; padding: 16px; margin: 16px 0; }
     legend { padding: 0 6px; }
     label { display: block; margin: 8px 0; }
-    .row { display: grid; gap: 8px; grid-template-columns: 1fr; }
     .inline { display: inline-flex; align-items: center; gap: 8px; margin-right: 12px; }
+
     button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid currentColor; cursor: pointer; }
-    .muted { opacity: 0.8; font-size: 0.95em; }
-    .hidden { display: none; }
-    .error { color: #b00020; }
-    #status[aria-live] { min-height: 1.3em; }
+    .row { display: grid; gap: 8px; grid-template-columns: 1fr; }
+    .stack { display: grid; gap: 10px; }
+
+    /* Pseudo flow */
+    .stepper { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .chip { border: 1px solid currentColor; padding: 2px 8px; border-radius: 999px; font-size: .9em; }
+    .box { border: 1px dashed currentColor; border-radius: 12px; padding: 16px; }
   </style>
 </head>
 <body>
-  <h1>Quick Survey</h1>
-  <p class="muted">After you submit, we’ll ask the browser for your location and open it in Google Maps.</p>
+  <main>
+    <h1>Survey → Open your location in Maps</h1>
+    <p class="muted">Served over <strong>HTTPS</strong> only (or <code>localhost</code>) for geolocation to work.</p>
 
-  <form id="survey" novalidate>
-    <!-- Q1: customize as needed -->
-    <fieldset>
-      <legend>What are you reporting today?</legend>
-      <label class="inline"><input type="radio" name="topic" value="meeting" required> Meeting point</label>
-      <label class="inline"><input type="radio" name="topic" value="delivery"> Delivery location</label>
-      <label class="inline"><input type="radio" name="topic" value="incident"> Incident/issue</label>
-      <label class="inline"><input type="radio" name="topic" value="other"> Other</label>
-      <div class="muted">Required</div>
-    </fieldset>
+    <nav>
+      <strong>Mode:</strong>
+      <button type="button" id="modeSurveyBtn">Full Survey</button>
+      <button type="button" id="modePseudoBtn">PseudoSurvey</button>
+      <span class="muted">(you can also use <code>?mode=survey</code> or <code>?mode=pseudo</code> in the URL)</span>
+    </nav>
 
-    <!-- Optional details -->
-    <fieldset>
-      <legend>Details (optional)</legend>
-      <label>Description
-        <textarea name="notes" rows="3" placeholder="Short note…"></textarea>
-      </label>
-    </fieldset>
+    <!-- ===================== FULL SURVEY ===================== -->
+    <section id="surveyMode" class="stack">
+      <h2>Full Survey</h2>
+      <p class="muted">After you submit, the page will request location permission and open it in your chosen maps app.</p>
 
-    <!-- Destination choice -->
-    <fieldset>
-      <legend>Open with</legend>
-      <label class="inline"><input type="radio" name="mapsApp" value="google" checked> Google Maps</label>
-      <label class="inline"><input type="radio" name="mapsApp" value="apple"> Apple Maps (iOS)</label>
-      <label class="inline"><input type="radio" name="mapsApp" value="geo"> Device Maps (geo: URI)</label>
-    </fieldset>
+      <form id="survey" novalidate>
+        <fieldset>
+          <legend>What are you reporting today?</legend>
+          <label class="inline"><input type="radio" name="topic" value="meeting" required> Meeting point</label>
+          <label class="inline"><input type="radio" name="topic" value="delivery"> Delivery location</label>
+          <label class="inline"><input type="radio" name="topic" value="incident"> Incident/issue</label>
+          <label class="inline"><input type="radio" name="topic" value="other"> Other</label>
+          <div class="muted">Required</div>
+        </fieldset>
 
-    <!-- Consent -->
-    <fieldset>
-      <legend>Consent</legend>
-      <label class="inline">
-        <input type="checkbox" name="consent" required>
-        I agree to share this device’s location to open it in my chosen maps app.
-      </label>
-      <div class="muted">Required</div>
-    </fieldset>
+        <fieldset>
+          <legend>Details (optional)</legend>
+          <label>Description
+            <textarea name="notes" rows="3" placeholder="Short note…"></textarea>
+          </label>
+        </fieldset>
 
-    <button id="submitBtn" type="submit">Submit & Open Maps</button>
-    <div id="status" class="muted" aria-live="polite"></div>
-    <p id="error" class="error hidden"></p>
+        <fieldset>
+          <legend>Open with</legend>
+          <label class="inline"><input type="radio" name="mapsApp" value="google" checked> Google Maps</label>
+          <label class="inline"><input type="radio" name="mapsApp" value="apple"> Apple Maps (iOS)</label>
+          <label class="inline"><input type="radio" name="mapsApp" value="geo"> Device Maps (geo: URI)</label>
+        </fieldset>
 
-    <!-- Retry UI (only shown on error) -->
-    <p id="retryWrap" class="hidden">
-      <button type="button" id="retryBtn">Retry location</button>
-      <button type="button" id="openWithoutLoc">Open Maps without location</button>
-    </p>
-  </form>
+        <fieldset>
+          <legend>Consent</legend>
+          <label class="inline">
+            <input type="checkbox" name="consent" required>
+            I agree to share this device’s location to open it in my chosen maps app.
+          </label>
+          <div class="muted">Required</div>
+        </fieldset>
+
+        <button id="submitBtn" type="submit">Submit & Open Maps</button>
+        <div id="status" class="muted" aria-live="polite"></div>
+        <p id="error" class="error hidden"></p>
+
+        <p id="retryWrap" class="hidden">
+          <button type="button" id="retryBtn">Retry location</button>
+          <button type="button" id="openWithoutLoc">Open Maps without location</button>
+        </p>
+      </form>
+    </section>
+
+    <!-- ===================== PSEUDOSURVEY ===================== -->
+    <section id="pseudoMode" class="stack hidden">
+      <h2>PseudoSurvey (quick)</h2>
+      <p class="muted">Minimal interaction. After a quick confirmation, we’ll request your location and open it in Maps. Useful for testing or fast flows.</p>
+
+      <div class="box">
+        <div class="stepper muted">
+          <span class="chip" id="psStep">Step 1/3</span>
+          <span id="psStatus">Ready</span>
+        </div>
+
+        <div id="psPane1" class="stack">
+          <p><strong>Confirm:</strong> You consent to share this device’s location to open it in your chosen maps app.</p>
+          <div>
+            <label class="inline"><input type="radio" name="psApp" value="google" checked> Google Maps</label>
+            <label class="inline"><input type="radio" name="psApp" value="apple"> Apple Maps (iOS)</label>
+            <label class="inline"><input type="radio" name="psApp" value="geo"> Device Maps (geo:)</label>
+          </div>
+          <button type="button" id="psStart">I Agree — Continue</button>
+        </div>
+
+        <div id="psPane2" class="stack hidden">
+          <p>Preflight checks… collecting non-identifying diagnostics (timezone, language, device capabilities).</p>
+          <button type="button" id="psGo">Open my location</button>
+          <p class="muted">You might see a browser permission prompt.</p>
+        </div>
+
+        <div id="psPane3" class="stack hidden">
+          <p>Requesting location…</p>
+          <p class="muted">If nothing happens in ~10 seconds, use the buttons below.</p>
+          <p>
+            <button type="button" id="psRetry">Retry</button>
+            <button type="button" id="psOpenBlank">Open Maps without location</button>
+          </p>
+          <p id="psError" class="error hidden"></p>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <script>
   'use strict';
 
-  // === Configuration (optional) ============================================
-  // If you want to log survey answers somewhere, set SUBMIT_ENDPOINT to your
-  // webhook URL (e.g., a server, Google Apps Script Web App, or Zapier/Integromat).
-  // Leave as null to skip network logging.
-  const SUBMIT_ENDPOINT = null; // e.g., "https://example.com/collect"
+  // =================== CONFIG ===================
+  // Set to a webhook URL if you want to log submissions/diagnostics.
+  // e.g., Google Apps Script Web App, your server, or an automation tool.
+  const SUBMIT_ENDPOINT = null; // "https://example.com/collect";
 
-  // === Utilities ============================================================
+  // =================== HELPERS ==================
   const $ = (sel, root = document) => root.querySelector(sel);
-  const toFixed6 = n => Math.round(n * 1e6) / 1e6; // ~11 cm precision, keeps URLs short
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const toFixed6 = n => Math.round(n * 1e6) / 1e6; // ~11 cm precision
 
   function mapsUrl(lat, lng, app) {
     const la = toFixed6(lat), lo = toFixed6(lng);
@@ -94,22 +152,24 @@
     }
   }
 
-  function setStatus(msg, isError = false) {
-    $('#status').textContent = msg || '';
-    const err = $('#error');
-    if (isError) {
-      err.textContent = msg;
-      err.classList.remove('hidden');
-    } else {
-      err.classList.add('hidden');
-      err.textContent = '';
-    }
+  function openMapsWithoutCoords(app) {
+    const url = app === 'apple' ? 'https://maps.apple.com/' : app === 'geo' ? 'geo:' : 'https://www.google.com/maps/';
+    window.location.href = url;
   }
 
-  async function logSubmission(payload) {
+  function setStatus(id, msg, isError = false) {
+    const statusEl = $(id);
+    if (!statusEl) return;
+    statusEl.textContent = msg || '';
+    if (isError) statusEl.classList.add('error'); else statusEl.classList.remove('error');
+  }
+
+  function show(el) { el.classList.remove('hidden'); }
+  function hide(el) { el.classList.add('hidden'); }
+
+  async function logJSON(payload) {
     if (!SUBMIT_ENDPOINT) return;
     try {
-      // Prefer sendBeacon during page unload; here we use fetch for clarity.
       await fetch(SUBMIT_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -117,14 +177,14 @@
         keepalive: true
       });
     } catch (e) {
-      // Logging failures shouldn’t block navigation.
       console.warn('Logging failed:', e);
     }
   }
 
-  function geolocateAndOpen(appChoice) {
+  function geolocateOnce() {
     if (!('geolocation' in navigator)) {
-      throw Object.assign(new Error('Geolocation not supported.'), {code: -1});
+      const err = Object.assign(new Error('Geolocation not supported'), { code: -1 });
+      return Promise.reject(err);
     }
     return new Promise((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -132,92 +192,198 @@
         maximumAge: 0,
         timeout: 10000
       });
-    }).then(pos => {
-      const { latitude, longitude, accuracy } = pos.coords;
-      const url = mapsUrl(latitude, longitude, appChoice);
-      // Replace so back button doesn’t return to the survey
-      window.location.replace(url);
-      return { latitude, longitude, accuracy };
     });
   }
 
-  // === Main ================================================================
-  const form = $('#survey');
-  const submitBtn = $('#submitBtn');
-  const retryBtn = $('#retryBtn');
-  const retryWrap = $('#retryWrap');
-  const openWithoutLoc = $('#openWithoutLoc');
+  async function uaHash() {
+    if (!('crypto' in window) || !('subtle' in crypto)) return null;
+    const enc = new TextEncoder().encode(navigator.userAgent);
+    const buf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
 
-  let lastPayload = null;
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    // Manual validity check to show clearer messages
-    if (!form.reportValidity()) return;
-
-    setStatus('Submitting your answer…');
-    submitBtn.disabled = true;
-
-    const fd = new FormData(form);
-    const payload = {
-      topic: fd.get('topic') || null,
-      notes: fd.get('notes') || '',
-      mapsApp: fd.get('mapsApp') || 'google',
-      consent: !!fd.get('consent'),
-      submittedAt: new Date().toISOString(),
-      userAgent: navigator.userAgent
+  async function collectDiagnostics() {
+    const nav = navigator;
+    const conn = nav.connection || nav.mozConnection || nav.webkitConnection || null;
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    let battery = null;
+    try { battery = nav.getBattery ? await nav.getBattery() : null; } catch {}
+    return {
+      tz,
+      lang: nav.language,
+      languages: nav.languages,
+      userAgentHash: await uaHash(),
+      deviceMemory: nav.deviceMemory ?? null,
+      hardwareConcurrency: nav.hardwareConcurrency ?? null,
+      connection: conn ? { effectiveType: conn.effectiveType, downlink: conn.downlink, rtt: conn.rtt, saveData: conn.saveData } : null,
+      viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio || 1 },
+      prefersDark: !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches),
+      battery: battery ? { level: battery.level, charging: battery.charging } : null,
+      ts: new Date().toISOString()
     };
-    lastPayload = payload;
+  }
 
-    // Fire-and-forget logging; don’t await if you’re worried about speed.
-    await logSubmission({ ...payload, stage: 'before_geolocation' });
+  // =================== SURVEY FLOW ===================
+  (function initSurveyFlow(){
+    const form = $('#survey');
+    const submitBtn = $('#submitBtn');
+    const retryBtn = $('#retryBtn');
+    const retryWrap = $('#retryWrap');
+    const openWithoutLoc = $('#openWithoutLoc');
+    const status = $('#status');
+    const errEl = $('#error');
+    let lastPayload = null;
 
-    try {
-      setStatus('Requesting location (you may see a permission prompt)…');
-      const result = await geolocateAndOpen(payload.mapsApp);
-      // In practice the page navigates away immediately above.
-      // If it didn’t, we could log the final location:
-      await logSubmission({ ...payload, ...result, stage: 'after_geolocation' });
-    } catch (err) {
-      // Handle errors and allow retry
-      let msg = 'Failed to get location.';
-      switch (err && err.code) {
-        case 1: msg = 'Permission denied. Allow location for this site in your browser settings, then retry.'; break;
-        case 2: msg = 'Position unavailable. Move to an open area or check GPS/network and retry.'; break;
-        case 3: msg = 'Timed out. Please try again.'; break;
-        default: msg = err && err.message ? err.message : msg;
+    function errorOut(msg) {
+      errEl.textContent = msg || 'Failed to get location.';
+      errEl.classList.remove('hidden');
+    }
+    function clearError(){ errEl.classList.add('hidden'); errEl.textContent=''; }
+
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearError();
+      if (!form.reportValidity()) return;
+
+      status.textContent = 'Submitting your answer…';
+      submitBtn.disabled = true;
+
+      const fd = new FormData(form);
+      const payload = {
+        mode: 'survey',
+        topic: fd.get('topic') || null,
+        notes: fd.get('notes') || '',
+        mapsApp: fd.get('mapsApp') || 'google',
+        consent: !!fd.get('consent'),
+        submittedAt: new Date().toISOString(),
+        userAgent: navigator.userAgent
+      };
+      lastPayload = payload;
+      await logJSON({ ...payload, stage: 'before_geolocation', diagnostics: await collectDiagnostics() });
+
+      try {
+        status.textContent = 'Requesting location (permission prompt may appear)…';
+        const pos = await geolocateOnce();
+        const { latitude, longitude, accuracy } = pos.coords;
+        await logJSON({ ...payload, latitude, longitude, accuracy, stage: 'after_geolocation' });
+        window.location.replace(mapsUrl(latitude, longitude, payload.mapsApp));
+      } catch (err) {
+        let msg = 'Failed to get location.';
+        switch (err && err.code) {
+          case 1: msg = 'Permission denied. Allow location for this site in your browser settings, then retry.'; break;
+          case 2: msg = 'Position unavailable. Move to an open area or check GPS/network and retry.'; break;
+          case 3: msg = 'Timed out. Please try again.'; break;
+        }
+        errorOut(msg);
+        retryWrap.classList.remove('hidden');
+        submitBtn.disabled = false;
       }
-      setStatus(msg, true);
-      retryWrap.classList.remove('hidden');
-      submitBtn.disabled = false;
-    }
-  });
+    });
 
-  retryBtn.addEventListener('click', async () => {
-    retryWrap.classList.add('hidden');
-    setStatus('Retrying location…');
-    submitBtn.disabled = true;
-    try {
-      await geolocateAndOpen((lastPayload && lastPayload.mapsApp) || 'google');
-    } catch (err) {
-      setStatus('Still couldn’t get location. Check permissions and connectivity, then try again.', true);
-      retryWrap.classList.remove('hidden');
-      submitBtn.disabled = false;
-    }
-  });
+    retryBtn?.addEventListener('click', async () => {
+      retryWrap.classList.add('hidden');
+      status.textContent = 'Retrying location…';
+      submitBtn.disabled = true;
+      try {
+        const pos = await geolocateOnce();
+        const app = (lastPayload && lastPayload.mapsApp) || 'google';
+        window.location.replace(mapsUrl(pos.coords.latitude, pos.coords.longitude, app));
+      } catch (err) {
+        status.textContent = '';
+        errorOut('Still couldn’t get location. Check permissions/connectivity, then try again.');
+        retryWrap.classList.remove('hidden');
+        submitBtn.disabled = false;
+      }
+    });
 
-  openWithoutLoc.addEventListener('click', () => {
-    // Opens chosen app without coordinates
-    const fd = new FormData(form);
-    const app = fd.get('mapsApp') || 'google';
-    const url = app === 'apple'
-      ? 'https://maps.apple.com/'
-      : app === 'geo'
-        ? 'geo:'
-        : 'https://www.google.com/maps/';
-    window.location.href = url;
-  });
+    openWithoutLoc?.addEventListener('click', () => {
+      const fd = new FormData(form);
+      const app = fd.get('mapsApp') || 'google';
+      openMapsWithoutCoords(app);
+    });
+  })();
+
+  // =================== PSEUDOSURVEY FLOW ===================
+  (function initPseudoFlow(){
+    const step = $('#psStep');
+    const status = $('#psStatus');
+    const pane1 = $('#psPane1');
+    const pane2 = $('#psPane2');
+    const pane3 = $('#psPane3');
+    const err = $('#psError');
+
+    function setStep(n, text){ step.textContent = `Step ${n}/3`; if (text) status.textContent = text; }
+    function showPane(p){ [pane1,pane2,pane3].forEach(x=>hide(x)); show(p); }
+
+    $('#psStart')?.addEventListener('click', async () => {
+      setStep(2, 'Preflight');
+      showPane(pane2);
+      // Do diagnostics in the background
+      const diag = await collectDiagnostics();
+      await logJSON({ mode: 'pseudo', stage: 'diagnostics', diagnostics: diag });
+    });
+
+    async function runLocate(app) {
+      setStep(3, 'Getting location');
+      showPane(pane3);
+      err.classList.add('hidden'); err.textContent = '';
+      try {
+        const pos = await geolocateOnce();
+        const { latitude, longitude, accuracy } = pos.coords;
+        await logJSON({ mode: 'pseudo', stage: 'after_geolocation', latitude, longitude, accuracy });
+        window.location.replace(mapsUrl(latitude, longitude, app));
+      } catch (e) {
+        err.textContent = (e && e.code === 1) ? 'Permission denied. Enable location for this site and retry.' : (e && e.code === 3) ? 'Timed out. Please try again.' : 'Could not get location.';
+        err.classList.remove('hidden');
+      }
+    }
+
+    $('#psGo')?.addEventListener('click', () => {
+      const app = ($('input[name="psApp"]:checked') || {}).value || 'google';
+      runLocate(app);
+    });
+
+    $('#psRetry')?.addEventListener('click', () => {
+      const app = ($('input[name="psApp"]:checked') || {}).value || 'google';
+      runLocate(app);
+    });
+
+    $('#psOpenBlank')?.addEventListener('click', () => {
+      const app = ($('input[name="psApp"]:checked') || {}).value || 'google';
+      openMapsWithoutCoords(app);
+    });
+  })();
+
+  // =================== MODE SWITCHING ===================
+  (function initMode(){
+    const surveyMode = $('#surveyMode');
+    const pseudoMode = $('#pseudoMode');
+    const btnSurvey = $('#modeSurveyBtn');
+    const btnPseudo = $('#modePseudoBtn');
+
+    function applyMode(mode){
+      if (mode === 'pseudo') { hide(surveyMode); show(pseudoMode); }
+      else { show(surveyMode); hide(pseudoMode); }
+    }
+
+    function getModeFromURL(){
+      const usp = new URLSearchParams(location.search);
+      return (usp.get('mode') === 'pseudo') ? 'pseudo' : 'survey';
+    }
+
+    btnSurvey?.addEventListener('click', () => { applyMode('survey'); history.replaceState({}, '', updateQuery('mode','survey')); });
+    btnPseudo?.addEventListener('click', () => { applyMode('pseudo'); history.replaceState({}, '', updateQuery('mode','pseudo')); });
+
+    function updateQuery(key, val){
+      const url = new URL(location.href);
+      url.searchParams.set(key, val);
+      return url.toString();
+    }
+
+    // initial
+    applyMode(getModeFromURL());
+  })();
+
   </script>
 </body>
 </html>
