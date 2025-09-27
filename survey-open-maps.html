@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Quick Survey → Open Maps</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; margin: 0; padding: 24px; }
+    form { max-width: 720px; margin: 0 auto; }
+    fieldset { border: 1px solid #999; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    legend { padding: 0 6px; }
+    label { display: block; margin: 8px 0; }
+    .row { display: grid; gap: 8px; grid-template-columns: 1fr; }
+    .inline { display: inline-flex; align-items: center; gap: 8px; margin-right: 12px; }
+    button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid currentColor; cursor: pointer; }
+    .muted { opacity: 0.8; font-size: 0.95em; }
+    .hidden { display: none; }
+    .error { color: #b00020; }
+    #status[aria-live] { min-height: 1.3em; }
+  </style>
+</head>
+<body>
+  <h1>Quick Survey</h1>
+  <p class="muted">After you submit, we’ll ask the browser for your location and open it in Google Maps.</p>
+
+  <form id="survey" novalidate>
+    <!-- Q1: customize as needed -->
+    <fieldset>
+      <legend>What are you reporting today?</legend>
+      <label class="inline"><input type="radio" name="topic" value="meeting" required> Meeting point</label>
+      <label class="inline"><input type="radio" name="topic" value="delivery"> Delivery location</label>
+      <label class="inline"><input type="radio" name="topic" value="incident"> Incident/issue</label>
+      <label class="inline"><input type="radio" name="topic" value="other"> Other</label>
+      <div class="muted">Required</div>
+    </fieldset>
+
+    <!-- Optional details -->
+    <fieldset>
+      <legend>Details (optional)</legend>
+      <label>Description
+        <textarea name="notes" rows="3" placeholder="Short note…"></textarea>
+      </label>
+    </fieldset>
+
+    <!-- Destination choice -->
+    <fieldset>
+      <legend>Open with</legend>
+      <label class="inline"><input type="radio" name="mapsApp" value="google" checked> Google Maps</label>
+      <label class="inline"><input type="radio" name="mapsApp" value="apple"> Apple Maps (iOS)</label>
+      <label class="inline"><input type="radio" name="mapsApp" value="geo"> Device Maps (geo: URI)</label>
+    </fieldset>
+
+    <!-- Consent -->
+    <fieldset>
+      <legend>Consent</legend>
+      <label class="inline">
+        <input type="checkbox" name="consent" required>
+        I agree to share this device’s location to open it in my chosen maps app.
+      </label>
+      <div class="muted">Required</div>
+    </fieldset>
+
+    <button id="submitBtn" type="submit">Submit & Open Maps</button>
+    <div id="status" class="muted" aria-live="polite"></div>
+    <p id="error" class="error hidden"></p>
+
+    <!-- Retry UI (only shown on error) -->
+    <p id="retryWrap" class="hidden">
+      <button type="button" id="retryBtn">Retry location</button>
+      <button type="button" id="openWithoutLoc">Open Maps without location</button>
+    </p>
+  </form>
+
+  <script>
+  'use strict';
+
+  // === Configuration (optional) ============================================
+  // If you want to log survey answers somewhere, set SUBMIT_ENDPOINT to your
+  // webhook URL (e.g., a server, Google Apps Script Web App, or Zapier/Integromat).
+  // Leave as null to skip network logging.
+  const SUBMIT_ENDPOINT = null; // e.g., "https://example.com/collect"
+
+  // === Utilities ============================================================
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const toFixed6 = n => Math.round(n * 1e6) / 1e6; // ~11 cm precision, keeps URLs short
+
+  function mapsUrl(lat, lng, app) {
+    const la = toFixed6(lat), lo = toFixed6(lng);
+    switch (app) {
+      case 'apple': return `https://maps.apple.com/?ll=${la},${lo}&q=My%20Location`;
+      case 'geo':   return `geo:${la},${lo}?q=${la},${lo}`;
+      default:      return `https://www.google.com/maps/search/?api=1&query=${la},${lo}`;
+    }
+  }
+
+  function setStatus(msg, isError = false) {
+    $('#status').textContent = msg || '';
+    const err = $('#error');
+    if (isError) {
+      err.textContent = msg;
+      err.classList.remove('hidden');
+    } else {
+      err.classList.add('hidden');
+      err.textContent = '';
+    }
+  }
+
+  async function logSubmission(payload) {
+    if (!SUBMIT_ENDPOINT) return;
+    try {
+      // Prefer sendBeacon during page unload; here we use fetch for clarity.
+      await fetch(SUBMIT_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      });
+    } catch (e) {
+      // Logging failures shouldn’t block navigation.
+      console.warn('Logging failed:', e);
+    }
+  }
+
+  function geolocateAndOpen(appChoice) {
+    if (!('geolocation' in navigator)) {
+      throw Object.assign(new Error('Geolocation not supported.'), {code: -1});
+    }
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000
+      });
+    }).then(pos => {
+      const { latitude, longitude, accuracy } = pos.coords;
+      const url = mapsUrl(latitude, longitude, appChoice);
+      // Replace so back button doesn’t return to the survey
+      window.location.replace(url);
+      return { latitude, longitude, accuracy };
+    });
+  }
+
+  // === Main ================================================================
+  const form = $('#survey');
+  const submitBtn = $('#submitBtn');
+  const retryBtn = $('#retryBtn');
+  const retryWrap = $('#retryWrap');
+  const openWithoutLoc = $('#openWithoutLoc');
+
+  let lastPayload = null;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    // Manual validity check to show clearer messages
+    if (!form.reportValidity()) return;
+
+    setStatus('Submitting your answer…');
+    submitBtn.disabled = true;
+
+    const fd = new FormData(form);
+    const payload = {
+      topic: fd.get('topic') || null,
+      notes: fd.get('notes') || '',
+      mapsApp: fd.get('mapsApp') || 'google',
+      consent: !!fd.get('consent'),
+      submittedAt: new Date().toISOString(),
+      userAgent: navigator.userAgent
+    };
+    lastPayload = payload;
+
+    // Fire-and-forget logging; don’t await if you’re worried about speed.
+    await logSubmission({ ...payload, stage: 'before_geolocation' });
+
+    try {
+      setStatus('Requesting location (you may see a permission prompt)…');
+      const result = await geolocateAndOpen(payload.mapsApp);
+      // In practice the page navigates away immediately above.
+      // If it didn’t, we could log the final location:
+      await logSubmission({ ...payload, ...result, stage: 'after_geolocation' });
+    } catch (err) {
+      // Handle errors and allow retry
+      let msg = 'Failed to get location.';
+      switch (err && err.code) {
+        case 1: msg = 'Permission denied. Allow location for this site in your browser settings, then retry.'; break;
+        case 2: msg = 'Position unavailable. Move to an open area or check GPS/network and retry.'; break;
+        case 3: msg = 'Timed out. Please try again.'; break;
+        default: msg = err && err.message ? err.message : msg;
+      }
+      setStatus(msg, true);
+      retryWrap.classList.remove('hidden');
+      submitBtn.disabled = false;
+    }
+  });
+
+  retryBtn.addEventListener('click', async () => {
+    retryWrap.classList.add('hidden');
+    setStatus('Retrying location…');
+    submitBtn.disabled = true;
+    try {
+      await geolocateAndOpen((lastPayload && lastPayload.mapsApp) || 'google');
+    } catch (err) {
+      setStatus('Still couldn’t get location. Check permissions and connectivity, then try again.', true);
+      retryWrap.classList.remove('hidden');
+      submitBtn.disabled = false;
+    }
+  });
+
+  openWithoutLoc.addEventListener('click', () => {
+    // Opens chosen app without coordinates
+    const fd = new FormData(form);
+    const app = fd.get('mapsApp') || 'google';
+    const url = app === 'apple'
+      ? 'https://maps.apple.com/'
+      : app === 'geo'
+        ? 'geo:'
+        : 'https://www.google.com/maps/';
+    window.location.href = url;
+  });
+  </script>
+</body>
+</html>
