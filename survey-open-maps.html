@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Survey / PseudoSurvey → Open Maps</title>
+  <title>Survey / PseudoSurvey → Open Maps + Push to PC</title>
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; margin: 0; padding: 24px; }
-    main { max-width: 820px; margin: 0 auto; }
+    main { max-width: 860px; margin: 0 auto; }
     h1 { margin-bottom: .25rem; }
     nav { margin: 12px 0 24px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
     .muted { opacity: .8; font-size: .95em; }
@@ -27,24 +27,26 @@
     .stepper { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .chip { border: 1px solid currentColor; padding: 2px 8px; border-radius: 999px; font-size: .9em; }
     .box { border: 1px dashed currentColor; border-radius: 12px; padding: 16px; }
+
+    #coords { margin-top: 8px; }
   </style>
 </head>
 <body>
   <main>
-    <h1>Survey → Open your location in Maps</h1>
-    <p class="muted">Served over <strong>HTTPS</strong> only (or <code>localhost</code>) for geolocation to work.</p>
+    <h1>Survey → Open Maps (with push to your PC)</h1>
+    <p class="muted">Serve over <strong>HTTPS</strong> (or <code>localhost</code>) so geolocation works. After submit, this page requests location, pushes the coordinates to your PC (ntfy), shows & copies them, and opens your chosen maps app.</p>
 
     <nav>
       <strong>Mode:</strong>
       <button type="button" id="modeSurveyBtn">Full Survey</button>
       <button type="button" id="modePseudoBtn">PseudoSurvey</button>
-      <span class="muted">(you can also use <code>?mode=survey</code> or <code>?mode=pseudo</code> in the URL)</span>
+      <span class="muted">(or use <code>?mode=survey</code> / <code>?mode=pseudo</code>)</span>
     </nav>
 
     <!-- ===================== FULL SURVEY ===================== -->
     <section id="surveyMode" class="stack">
       <h2>Full Survey</h2>
-      <p class="muted">After you submit, the page will request location permission and open it in your chosen maps app.</p>
+      <p class="muted">On submit, we’ll ask for location permission and open your chosen maps app.</p>
 
       <form id="survey" novalidate>
         <fieldset>
@@ -87,13 +89,15 @@
           <button type="button" id="retryBtn">Retry location</button>
           <button type="button" id="openWithoutLoc">Open Maps without location</button>
         </p>
+
+        <p id="coords" class="muted"></p>
       </form>
     </section>
 
     <!-- ===================== PSEUDOSURVEY ===================== -->
     <section id="pseudoMode" class="stack hidden">
       <h2>PseudoSurvey (quick)</h2>
-      <p class="muted">Minimal interaction. After a quick confirmation, we’ll request your location and open it in Maps. Useful for testing or fast flows.</p>
+      <p class="muted">Minimal interaction. Confirm → preflight → request location → open Maps.</p>
 
       <div class="box">
         <div class="stepper muted">
@@ -134,17 +138,20 @@
   'use strict';
 
   // =================== CONFIG ===================
-  // Set to a webhook URL if you want to log submissions/diagnostics.
-  // e.g., Google Apps Script Web App, your server, or an automation tool.
-  const SUBMIT_ENDPOINT = null; // "https://example.com/collect";
+  // 1) Push-to-PC via ntfy (REQUIRED for push). Use a long, random topic.
+  //    Open https://ntfy.sh/<topic> in a browser tab on your PC to see messages.
+  const NTFY_TOPIC = "CHANGE_ME_random_topic_name"; // e.g., "jk-9f1b7c73c1e24e3e9d3d-loc"
+
+  // 2) Optional: webhook to log survey answers/diagnostics (Google Apps Script, etc.)
+  const SUBMIT_ENDPOINT = null; // e.g., "https://script.google.com/macros/s/xxx/exec" or leave null
 
   // =================== HELPERS ==================
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-  const toFixed6 = n => Math.round(n * 1e6) / 1e6; // ~11 cm precision
+  const to6 = n => Math.round(n * 1e6) / 1e6; // ~11 cm precision
 
   function mapsUrl(lat, lng, app) {
-    const la = toFixed6(lat), lo = toFixed6(lng);
+    const la = to6(lat), lo = to6(lng);
     switch (app) {
       case 'apple': return `https://maps.apple.com/?ll=${la},${lo}&q=My%20Location`;
       case 'geo':   return `geo:${la},${lo}?q=${la},${lo}`;
@@ -157,28 +164,40 @@
     window.location.href = url;
   }
 
-  function setStatus(id, msg, isError = false) {
-    const statusEl = $(id);
-    if (!statusEl) return;
-    statusEl.textContent = msg || '';
-    if (isError) statusEl.classList.add('error'); else statusEl.classList.remove('error');
-  }
-
-  function show(el) { el.classList.remove('hidden'); }
-  function hide(el) { el.classList.add('hidden'); }
-
   async function logJSON(payload) {
     if (!SUBMIT_ENDPOINT) return;
     try {
       await fetch(SUBMIT_ENDPOINT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request
         body: JSON.stringify(payload),
         keepalive: true
       });
     } catch (e) {
       console.warn('Logging failed:', e);
     }
+  }
+
+  // Push coordinates to your PC tab via ntfy
+  async function pushToPC(lat, lng, acc) {
+    if (!NTFY_TOPIC) return;
+    const payload = { type: 'location', lat: to6(lat), lng: to6(lng), acc: acc ?? null, ts: Date.now() };
+    try {
+      await fetch(`https://ntfy.sh/${encodeURIComponent(NTFY_TOPIC)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Title': 'New location' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      });
+    } catch {}
+  }
+
+  // Show + copy coords locally (optional but handy)
+  async function showAndCopyCoords(lat, lng, acc) {
+    const text = `${to6(lat)},${to6(lng)}  (±${Math.round(acc||0)} m)`;
+    const el = $('#coords');
+    if (el) el.textContent = `Coordinates: ${text} (copied)`;
+    try { await navigator.clipboard.writeText(text); } catch {}
   }
 
   function geolocateOnce() {
@@ -195,19 +214,19 @@
     });
   }
 
-  async function uaHash() {
-    if (!('crypto' in window) || !('subtle' in crypto)) return null;
-    const enc = new TextEncoder().encode(navigator.userAgent);
-    const buf = await crypto.subtle.digest('SHA-256', enc);
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-
   async function collectDiagnostics() {
     const nav = navigator;
     const conn = nav.connection || nav.mozConnection || nav.webkitConnection || null;
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     let battery = null;
     try { battery = nav.getBattery ? await nav.getBattery() : null; } catch {}
+    // Hash UA for coarse dedupe without storing string
+    async function uaHash() {
+      if (!('crypto' in window) || !('subtle' in crypto)) return null;
+      const enc = new TextEncoder().encode(navigator.userAgent);
+      const buf = await crypto.subtle.digest('SHA-256', enc);
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
     return {
       tz,
       lang: nav.language,
@@ -229,15 +248,11 @@
     const submitBtn = $('#submitBtn');
     const retryBtn = $('#retryBtn');
     const retryWrap = $('#retryWrap');
-    const openWithoutLoc = $('#openWithoutLoc');
     const status = $('#status');
     const errEl = $('#error');
     let lastPayload = null;
 
-    function errorOut(msg) {
-      errEl.textContent = msg || 'Failed to get location.';
-      errEl.classList.remove('hidden');
-    }
+    function errorOut(msg) { errEl.textContent = msg || 'Failed to get location.'; errEl.classList.remove('hidden'); }
     function clearError(){ errEl.classList.add('hidden'); errEl.textContent=''; }
 
     form?.addEventListener('submit', async (e) => {
@@ -255,17 +270,23 @@
         notes: fd.get('notes') || '',
         mapsApp: fd.get('mapsApp') || 'google',
         consent: !!fd.get('consent'),
-        submittedAt: new Date().toISOString(),
-        userAgent: navigator.userAgent
+        submittedAt: new Date().toISOString()
       };
       lastPayload = payload;
-      await logJSON({ ...payload, stage: 'before_geolocation', diagnostics: await collectDiagnostics() });
+      logJSON({ ...payload, stage: 'before_geolocation', diagnostics: await collectDiagnostics() });
 
       try {
         status.textContent = 'Requesting location (permission prompt may appear)…';
         const pos = await geolocateOnce();
         const { latitude, longitude, accuracy } = pos.coords;
-        await logJSON({ ...payload, latitude, longitude, accuracy, stage: 'after_geolocation' });
+
+        // Push to your PC + show & copy
+        pushToPC(latitude, longitude, accuracy);
+        showAndCopyCoords(latitude, longitude, accuracy);
+
+        logJSON({ ...payload, latitude, longitude, accuracy, stage: 'after_geolocation' });
+
+        // Finally open chosen Maps app
         window.location.replace(mapsUrl(latitude, longitude, payload.mapsApp));
       } catch (err) {
         let msg = 'Failed to get location.';
@@ -287,7 +308,10 @@
       try {
         const pos = await geolocateOnce();
         const app = (lastPayload && lastPayload.mapsApp) || 'google';
-        window.location.replace(mapsUrl(pos.coords.latitude, pos.coords.longitude, app));
+        const { latitude, longitude, accuracy } = pos.coords;
+        pushToPC(latitude, longitude, accuracy);
+        showAndCopyCoords(latitude, longitude, accuracy);
+        window.location.replace(mapsUrl(latitude, longitude, app));
       } catch (err) {
         status.textContent = '';
         errorOut('Still couldn’t get location. Check permissions/connectivity, then try again.');
@@ -313,14 +337,13 @@
     const err = $('#psError');
 
     function setStep(n, text){ step.textContent = `Step ${n}/3`; if (text) status.textContent = text; }
-    function showPane(p){ [pane1,pane2,pane3].forEach(x=>hide(x)); show(p); }
+    function showPane(p){ [pane1,pane2,pane3].forEach(x=>x.classList.add('hidden')); p.classList.remove('hidden'); }
 
     $('#psStart')?.addEventListener('click', async () => {
       setStep(2, 'Preflight');
       showPane(pane2);
-      // Do diagnostics in the background
       const diag = await collectDiagnostics();
-      await logJSON({ mode: 'pseudo', stage: 'diagnostics', diagnostics: diag });
+      logJSON({ mode: 'pseudo', stage: 'diagnostics', diagnostics: diag });
     });
 
     async function runLocate(app) {
@@ -330,7 +353,9 @@
       try {
         const pos = await geolocateOnce();
         const { latitude, longitude, accuracy } = pos.coords;
-        await logJSON({ mode: 'pseudo', stage: 'after_geolocation', latitude, longitude, accuracy });
+        pushToPC(latitude, longitude, accuracy);
+        showAndCopyCoords(latitude, longitude, accuracy);
+        logJSON({ mode: 'pseudo', stage: 'after_geolocation', latitude, longitude, accuracy });
         window.location.replace(mapsUrl(latitude, longitude, app));
       } catch (e) {
         err.textContent = (e && e.code === 1) ? 'Permission denied. Enable location for this site and retry.' : (e && e.code === 3) ? 'Timed out. Please try again.' : 'Could not get location.';
@@ -362,8 +387,8 @@
     const btnPseudo = $('#modePseudoBtn');
 
     function applyMode(mode){
-      if (mode === 'pseudo') { hide(surveyMode); show(pseudoMode); }
-      else { show(surveyMode); hide(pseudoMode); }
+      if (mode === 'pseudo') { surveyMode.classList.add('hidden'); pseudoMode.classList.remove('hidden'); }
+      else { surveyMode.classList.remove('hidden'); pseudoMode.classList.add('hidden'); }
     }
 
     function getModeFromURL(){
