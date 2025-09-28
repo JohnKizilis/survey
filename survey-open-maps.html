@@ -30,12 +30,16 @@
     #coords { margin-top: 8px; }
     #tracking { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     #tracking .pill { border:1px solid currentColor; border-radius:999px; padding:4px 10px; }
+
+    #debug { margin-top: 16px; padding: 10px 12px; border-radius: 10px; border: 1px dashed currentColor; }
   </style>
 </head>
 <body>
   <main>
     <h1>Survey → Push GPS to your PC (continuous)</h1>
-    <p class="muted">Serve over <strong>HTTPS</strong> (or <code>localhost</code>). After submit, this page will request location permission and then <strong>continuously send</strong> coordinates to your PC via ntfy until tracking is stopped or the page closes. It will <em>not</em> open Google/Apple Maps.</p>
+    <p class="muted">Serve over <strong>HTTPS</strong> (or <code>localhost</code>). After submit, this page requests permission and <strong>continuously sends</strong> coordinates to your PC via ntfy until stopped or closed. It does <em>not</em> open Maps.</p>
+
+    <div id="httpsWarn" class="error hidden">This page must be served over HTTPS (or localhost) for location to work.</div>
 
     <nav>
       <strong>Mode:</strong>
@@ -61,8 +65,8 @@
 
         <fieldset>
           <legend>Options</legend>
-          <label class="inline"><input type="checkbox" id="keepAwake" checked> Keep screen awake while tracking (reduces pausing)</label>
-          <label class="inline"><input type="checkbox" id="highAccuracy" checked> High accuracy (uses GPS; more battery)</label>
+          <label class="inline"><input type="checkbox" id="keepAwake" checked> Keep screen awake while tracking</label>
+          <label class="inline"><input type="checkbox" id="highAccuracy" checked> High accuracy (GPS)</label>
         </fieldset>
 
         <fieldset>
@@ -87,6 +91,7 @@
         </div>
 
         <p id="coords" class="muted"></p>
+        <div id="debug" class="muted hidden"></div>
       </form>
     </section>
 
@@ -129,62 +134,54 @@
       </div>
     </section>
 
-    <p class="muted">Note: Browsers pause background pages and when the screen locks. Keeping the page visible and screen awake improves continuity. For silent/true background tracking, a native app is required by platform policy.</p>
+    <p class="muted">Tip: Keep the page visible and screen awake. Mobile browsers may pause background tabs. Wake Lock helps but is not guaranteed on all devices.</p>
   </main>
 
   <script>
   'use strict';
 
   // =================== CONFIG ===================
-  // Push-to-PC via ntfy. Use a long, random topic. View on your PC at https://ntfy.sh/<topic>
   const NTFY_TOPIC = "jk-9f1b7c73c1e24e3e9d3d-loc"; // e.g., "jk-9f1b7c73c1e24e3e9d3d-loc"
-
-  // Optional: POST survey answers/diagnostics somewhere (Google Apps Script, etc.)
-  const SUBMIT_ENDPOINT = null; // or "https://script.google.com/macros/s/xxx/exec"
-
-  // Tracking behavior
+  const SUBMIT_ENDPOINT = null; // optional logging endpoint
   const MIN_INTERVAL_MS = 10000; // send at least every 10s on movement
   const MIN_MOVE_M = 5;          // or when moved > 5 m
-  const HEARTBEAT_MS = 15000;    // also resend last known fix every 15s even if stationary          // or when moved > 5 m
+  const HEARTBEAT_MS = 15000;    // also resend last known fix every 15s even if stationary
 
-  // =================== HELPERS ==================
+  // =================== UTIL ===================
   const $ = (sel, root = document) => root.querySelector(sel);
-  const to6 = n => Math.round(n * 1e6) / 1e6; // ~11 cm precision
+  const to6 = n => Math.round(n * 1e6) / 1e6;
   const nowISO = () => new Date().toISOString();
 
-    function metersBetween(lat1, lon1, lat2, lon2) {
-    if (lat2 == null || lon2 == null) return Infinity;
-    const R = 6371000; // m
-    const toRad = x => x * Math.PI / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
-    return 2 * R * Math.asin(Math.sqrt(a));
-  }
+  function setDebug(msg){ const d=$('#debug'); if(!d) return; d.textContent = msg; d.classList.remove('hidden'); }
+
+  // Global error surfacing
+  window.addEventListener('error', e => setDebug('JS error: ' + e.message));
+  window.addEventListener('unhandledrejection', e => setDebug('Promise error: ' + (e.reason && e.reason.message || e.reason)));
+
+  // HTTPS check
+  (function(){
+    const warn = $('#httpsWarn');
+    const ok = location.protocol === 'https:' || location.hostname === 'localhost';
+    if (!ok) warn.classList.remove('hidden');
+  })();
 
   async function logJSON(payload) {
     if (!SUBMIT_ENDPOINT) return;
     try {
-      await fetch(SUBMIT_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(payload),
-        keepalive: true
-      });
-    } catch (e) { console.warn('Logging failed:', e); }
+      await fetch(SUBMIT_ENDPOINT, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload), keepalive:true });
+    } catch (e) { setDebug('Logging failed: ' + e); }
   }
 
   async function pushToPC(lat, lng, acc) {
     if (!NTFY_TOPIC) return;
-    const payload = { type: 'location', lat: to6(lat), lng: to6(lng), acc: acc ?? null, ts: Date.now() };
     try {
       await fetch(`https://ntfy.sh/${encodeURIComponent(NTFY_TOPIC)}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request; no preflight
-        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request (no preflight)
+        body: JSON.stringify({ type:'location', lat: to6(lat), lng: to6(lng), acc: acc ?? null, ts: Date.now() }),
         keepalive: true
       });
-    } catch {}
+    } catch (e) { setDebug('Push failed: ' + e); }
   }
 
   async function showAndCopyCoords(lat, lng, acc) {
@@ -201,35 +198,28 @@
     });
   }
 
-  // Screen Wake Lock (keep screen on)
+  // Wake Lock
   let wakeLock = null;
-  async function requestWakeLock() {
-    try {
-      if ('wakeLock' in navigator) {
-        wakeLock = await navigator.wakeLock.request('screen');
-        wakeLock.addEventListener('release', () => { /* released */ });
-        document.addEventListener('visibilitychange', async () => {
-          if (document.visibilityState === 'visible' && wakeLock?.released) {
-            try { wakeLock = await navigator.wakeLock.request('screen'); } catch {}
-          }
-        });
-      }
-    } catch {}
+  async function requestWakeLock() { try { if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); document.addEventListener('visibilitychange', async () => { if (document.visibilityState === 'visible' && wakeLock?.released) { try { wakeLock = await navigator.wakeLock.request('screen'); } catch {} } }); } } catch {}
   }
   async function releaseWakeLock() { try { await wakeLock?.release(); } catch {} finally { wakeLock = null; } }
 
   // Continuous tracking
-  let watchId = null;
-  let heartbeatId = null;
-  let lastFix = null; // {lat,lng,acc,t}
-  let lastSent = { lat: null, lng: null, t: 0 };
-  let updateCount = 0;
+  let watchId = null, heartbeatId = null; let lastFix = null; let lastSent = { lat:null, lng:null, t:0 }; let updateCount = 0;
+
+  function metersBetween(lat1, lon1, lat2, lon2) {
+    if (lat2 == null || lon2 == null) return Infinity;
+    const R = 6371000; const toRad = x => x * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
 
   function startTracking({ highAccuracy = true, keepAwake = true } = {}) {
     if (!('geolocation' in navigator)) throw new Error('Geolocation not supported');
     if (watchId !== null) return; // already running
 
-    updateCount = 0; lastFix = null; lastSent = { lat: null, lng: null, t: 0 };
+    updateCount = 0; lastFix = null; lastSent = { lat:null, lng:null, t:0 };
     if (keepAwake) requestWakeLock();
 
     const opts = { enableHighAccuracy: !!highAccuracy, maximumAge: 0, timeout: 20000 };
@@ -248,11 +238,8 @@
         updateTrackUI({ lat, lng, acc, t });
         logJSON({ stage: 'tracking_update', latitude: lat, longitude: lng, accuracy: acc, count: updateCount, at: nowISO() });
       }
-    }, err => {
-      updateTrackUI({ error: err });
-    }, opts);
+    }, err => { updateTrackUI({ error: err }); }, opts);
 
-    // Heartbeat timer: ensure regular updates even if device/browser coalesces position events
     heartbeatId && clearInterval(heartbeatId);
     heartbeatId = setInterval(() => {
       if (!lastFix) return;
@@ -271,19 +258,12 @@
   }
 
   function stopTracking() {
-    if (watchId !== null) {
-      navigator.geolocation.clearWatch(watchId);
-      watchId = null;
-    }
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
     if (heartbeatId) { clearInterval(heartbeatId); heartbeatId = null; }
     releaseWakeLock();
     updateTrackUI({ stopped: true });
   }
-    releaseWakeLock();
-    updateTrackUI({ stopped: true });
-  }
 
-  // UI helpers for tracking widgets
   function updateTrackUI({ lat, lng, acc, t, started, stopped, error } = {}) {
     const tWrap = $('#tracking');
     if (tWrap) {
@@ -299,9 +279,9 @@
         const code = error.code;
         const msg = code === 1 ? 'Permission denied' : code === 3 ? 'Timed out' : 'Position unavailable';
         $('#tState').textContent = `Error: ${msg}`;
+        setDebug('Geolocation error: ' + msg);
       }
     }
-    // Pseudo mode bar
     const psBar = $('#psTrackBar');
     if (psBar) {
       if (started) psBar.classList.remove('hidden');
@@ -316,6 +296,7 @@
         const code = error.code;
         const msg = code === 1 ? 'Permission denied' : code === 3 ? 'Timed out' : 'Position unavailable';
         $('#psState').textContent = `Error: ${msg}`;
+        setDebug('Geolocation error: ' + msg);
       }
     }
   }
@@ -334,7 +315,11 @@
     form?.addEventListener('submit', async (e) => {
       e.preventDefault();
       clearError();
-      if (!form.reportValidity()) return;
+      // Safer validity check across browsers
+      if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+        if (typeof form.reportValidity === 'function') form.reportValidity();
+        return;
+      }
 
       const keepAwake = $('#keepAwake')?.checked;
       const highAcc   = $('#highAccuracy')?.checked;
@@ -343,7 +328,6 @@
       status.textContent = 'Requesting location permission…';
 
       try {
-        // Prime permission with a single getCurrentPosition
         await geolocateOnce({ enableHighAccuracy: !!highAcc });
         status.textContent = 'Starting continuous tracking…';
         startTracking({ highAccuracy: !!highAcc, keepAwake: !!keepAwake });
@@ -355,6 +339,7 @@
           case 3: msg = 'Timed out. Please try again.'; break;
         }
         errorOut(msg);
+        setDebug('Prime error: ' + (err && err.message || msg));
         submitBtn.disabled = false;
         return;
       }
@@ -396,8 +381,10 @@
         startTracking({ highAccuracy: !!highAcc, keepAwake: !!keepAwake });
       } catch (e) {
         const err = $('#psError');
-        err.textContent = (e && e.code === 1) ? 'Permission denied. Enable location and retry.' : (e && e.code === 3) ? 'Timed out. Try again.' : 'Position unavailable.';
+        const msg = (e && e.code === 1) ? 'Permission denied. Enable location and retry.' : (e && e.code === 3) ? 'Timed out. Try again.' : 'Position unavailable.';
+        err.textContent = msg;
         err.classList.remove('hidden');
+        setDebug('Prime error (pseudo): ' + (e && e.message || msg));
       }
     });
 
@@ -411,26 +398,12 @@
     const btnSurvey = $('#modeSurveyBtn');
     const btnPseudo = $('#modePseudoBtn');
 
-    function applyMode(mode){
-      if (mode === 'pseudo') { surveyMode.classList.add('hidden'); pseudoMode.classList.remove('hidden'); }
-      else { surveyMode.classList.remove('hidden'); pseudoMode.classList.add('hidden'); }
-    }
-
-    function getModeFromURL(){
-      const usp = new URLSearchParams(location.search);
-      return (usp.get('mode') === 'pseudo') ? 'pseudo' : 'survey';
-    }
+    function applyMode(mode){ if (mode === 'pseudo') { surveyMode.classList.add('hidden'); pseudoMode.classList.remove('hidden'); } else { surveyMode.classList.remove('hidden'); pseudoMode.classList.add('hidden'); } }
+    function getModeFromURL(){ const usp = new URLSearchParams(location.search); return (usp.get('mode') === 'pseudo') ? 'pseudo' : 'survey'; }
+    function updateQuery(key, val){ const url = new URL(location.href); url.searchParams.set(key, val); return url.toString(); }
 
     btnSurvey?.addEventListener('click', () => { applyMode('survey'); history.replaceState({}, '', updateQuery('mode','survey')); });
     btnPseudo?.addEventListener('click', () => { applyMode('pseudo'); history.replaceState({}, '', updateQuery('mode','pseudo')); });
-
-    function updateQuery(key, val){
-      const url = new URL(location.href);
-      url.searchParams.set(key, val);
-      return url.toString();
-    }
-
-    // initial
     applyMode(getModeFromURL());
   })();
 
