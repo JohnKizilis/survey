@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Survey / PseudoSurvey → Push GPS to PC (Continuous)</title>
+  <title>Survey / PseudoSurvey → Push GPS to PC (Continuous, No Maps)</title>
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; margin: 0; padding: 24px; }
@@ -143,16 +143,16 @@
   const SUBMIT_ENDPOINT = null; // or "https://script.google.com/macros/s/xxx/exec"
 
   // Tracking behavior
-  const MIN_INTERVAL_MS = 10000; // send at least every 10s
+  const MIN_INTERVAL_MS = 10000; // send at least every 10s on movement
   const MIN_MOVE_M = 5;          // or when moved > 5 m
+  const HEARTBEAT_MS = 15000;    // also resend last known fix every 15s even if stationary          // or when moved > 5 m
 
   // =================== HELPERS ==================
   const $ = (sel, root = document) => root.querySelector(sel);
   const to6 = n => Math.round(n * 1e6) / 1e6; // ~11 cm precision
   const nowISO = () => new Date().toISOString();
 
-  function mapsUrl(lat, lng) { return `https://www.google.com/maps/search/?api=1&query=${to6(lat)},${to6(lng)}`; }
-  function metersBetween(lat1, lon1, lat2, lon2) {
+    function metersBetween(lat1, lon1, lat2, lon2) {
     if (lat2 == null || lon2 == null) return Infinity;
     const R = 6371000; // m
     const toRad = x => x * Math.PI / 180;
@@ -176,11 +176,11 @@
 
   async function pushToPC(lat, lng, acc) {
     if (!NTFY_TOPIC) return;
-    const payload = { type: 'location', lat: to6(lat), lng: to6(lng), acc: acc ?? null, ts: Date.now(), url: mapsUrl(lat, lng) };
+    const payload = { type: 'location', lat: to6(lat), lng: to6(lng), acc: acc ?? null, ts: Date.now() };
     try {
       await fetch(`https://ntfy.sh/${encodeURIComponent(NTFY_TOPIC)}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Title': 'Location update' },
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // simple request; no preflight
         body: JSON.stringify(payload),
         keepalive: true
       });
@@ -220,6 +220,8 @@
 
   // Continuous tracking
   let watchId = null;
+  let heartbeatId = null;
+  let lastFix = null; // {lat,lng,acc,t}
   let lastSent = { lat: null, lng: null, t: 0 };
   let updateCount = 0;
 
@@ -227,7 +229,7 @@
     if (!('geolocation' in navigator)) throw new Error('Geolocation not supported');
     if (watchId !== null) return; // already running
 
-    updateCount = 0; lastSent = { lat: null, lng: null, t: 0 };
+    updateCount = 0; lastFix = null; lastSent = { lat: null, lng: null, t: 0 };
     if (keepAwake) requestWakeLock();
 
     const opts = { enableHighAccuracy: !!highAccuracy, maximumAge: 0, timeout: 20000 };
@@ -235,6 +237,7 @@
     watchId = navigator.geolocation.watchPosition(pos => {
       const { latitude:lat, longitude:lng, accuracy:acc } = pos.coords;
       const t = Date.now();
+      lastFix = { lat, lng, acc, t };
       const moved = metersBetween(lat, lng, lastSent.lat, lastSent.lng) > MIN_MOVE_M;
       const elapsed = t - (lastSent.t || 0);
       if (moved || elapsed >= MIN_INTERVAL_MS) {
@@ -249,6 +252,21 @@
       updateTrackUI({ error: err });
     }, opts);
 
+    // Heartbeat timer: ensure regular updates even if device/browser coalesces position events
+    heartbeatId && clearInterval(heartbeatId);
+    heartbeatId = setInterval(() => {
+      if (!lastFix) return;
+      const t = Date.now();
+      if (t - (lastSent.t || 0) >= HEARTBEAT_MS) {
+        const { lat, lng, acc } = lastFix;
+        lastSent = { lat, lng, t };
+        updateCount++;
+        pushToPC(lat, lng, acc);
+        updateTrackUI({ lat, lng, acc, t });
+        logJSON({ stage: 'heartbeat_update', latitude: lat, longitude: lng, accuracy: acc, count: updateCount, at: nowISO() });
+      }
+    }, HEARTBEAT_MS);
+
     updateTrackUI({ started: true });
   }
 
@@ -257,6 +275,10 @@
       navigator.geolocation.clearWatch(watchId);
       watchId = null;
     }
+    if (heartbeatId) { clearInterval(heartbeatId); heartbeatId = null; }
+    releaseWakeLock();
+    updateTrackUI({ stopped: true });
+  }
     releaseWakeLock();
     updateTrackUI({ stopped: true });
   }
